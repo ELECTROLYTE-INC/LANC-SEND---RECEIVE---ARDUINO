@@ -1,0 +1,226 @@
+//#include <DMXSerial.h>
+#include "FastLED.h"
+#define NUM_leds 2
+#define DATA_PIN 8
+
+CRGB leds[NUM_leds];
+
+int PinLANC = 7;  // 5V limited input signal from LANC data
+int PinCMD = 6;   // Command to send to LANC
+
+byte bitDuration = 96;
+
+int PinREC = A6; // Button for testing LANC function
+int PinZOOM = A7;   // Button to start zoom with selected speed
+
+int val = 8;  // Placeholder for reading potentiometer values
+
+int speeds[18] = {
+  0x0e, 0x0c, 0x0a, 0x08, 0x06, 0x04, 0x02, 0x00, 
+  99, 99, 99, 
+  0x10, 0x12, 0x14, 0x16, 0x18, 0x1a, 0x1e
+};
+
+const int eSTOP     = 0x30;
+const int eRECStart = 0x33;
+const int ePLAY     = 0x34;
+const int eRECStop  = 0x3C29;
+
+int   byte0;
+int   eCommand;
+int   nDetectedStatus;
+byte  nCommandTimes;
+int   nFlashCounter;
+
+void setup() { 
+  FastLED.addLeds<WS2812B, DATA_PIN, RGB>(leds, NUM_leds);
+  leds[0] = CRGB(50, 50, 50);
+  leds[1] = CRGB(0, 0, 50);
+  FastLED.show();
+
+  
+  delay(200);
+  
+//  DMXSerial.init(DMXReceiver);
+
+  pinMode(PinLANC, INPUT);
+  pinMode(PinCMD, OUTPUT);
+
+  pinMode(PinREC, INPUT_PULLUP);
+  pinMode(PinZOOM, INPUT);
+
+  nFlashCounter = 0;
+  nCommandTimes = 0;
+}
+
+void FlashLED() {
+  boolean bLED_ON = false;
+
+  nFlashCounter++;
+  if (nFlashCounter >= 50)
+    nFlashCounter = 0;
+  else if (nFlashCounter >= 45)
+    bLED_ON = true;
+
+  if (bLED_ON) {
+    switch (nDetectedStatus) {
+    case 0x02: // stop
+      leds[0] = CRGB(255, 0, 0);
+      break;
+    case 0x06: // PLAY
+      leds[0] = CRGB(0, 0, 255);
+      break;
+    case 0x04: // REC
+      leds[0] = CRGB(0, 255, 0);
+      break;
+    default: // any other activity except STOP
+      leds[0] = CRGB(127, 127, 0);
+      break;
+    }
+  } else {
+    leds[0] = CRGB(0, 0, 0);
+  }
+  FastLED.show();
+}
+
+void AfterLongGap() {
+  boolean bLongEnough = false;
+  int nInd;
+
+  while (!bLongEnough) {
+    for (nInd = 0; nInd < 150; nInd++) {
+      delayMicroseconds(25);
+      if (digitalRead(PinLANC) == LOW)
+        break;
+    }
+    if (nInd == 150)
+      bLongEnough = true;
+  }
+
+  while (digitalRead(PinLANC) == HIGH)
+    delayMicroseconds(25);
+}
+
+void NextStartBit() {
+  while (digitalRead(PinLANC) == LOW) {
+    delayMicroseconds(25);
+  }
+  while (digitalRead(PinLANC) == HIGH) {
+    delayMicroseconds(25);
+  }
+}
+
+void SendCommand_BYTE0(unsigned char nCommand) {
+  delayMicroseconds(bitDuration); // ignore start bit
+  digitalWrite(PinCMD, nCommand & 0x01);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x02) >> 1);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x04) >> 2);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x08) >> 3);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x10) >> 4);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x20) >> 5);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x40) >> 6);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x80) >> 7);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, LOW); // free the LANC bus after writing the whole command
+}
+
+void SendCommand_BYTE1(unsigned char nCommand) {
+  delayMicroseconds(bitDuration); // ignore start bit
+  digitalWrite(PinCMD, nCommand & 0x01);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x02) >> 1);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x04) >> 2);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x08) >> 3);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x10) >> 4);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x20) >> 5);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x40) >> 6);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, (nCommand & 0x80) >> 7);
+  delayMicroseconds(bitDuration);
+  digitalWrite(PinCMD, LOW); // free the LANC bus after writing the whole command
+}
+
+byte GetNextByte() {
+  unsigned char nByte = 0;
+
+  delayMicroseconds(104); // ignore start bit
+  nByte |= digitalRead(PinLANC);
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 1;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 2;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 3;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 4;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 5;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 6;
+  delayMicroseconds(104);
+  nByte |= digitalRead(PinLANC) << 7;
+  nByte = nByte ^ 255; // invert bits, we got LANC LOWs for logic HIGHs
+
+  return nByte;
+}
+
+void GetCommand() {
+  
+  if (analogRead(PinREC)==LOW) {
+    eCommand = eRECStart;
+    byte0 = 0x18;
+    leds[1] = CRGB(0, 0, 50);
+  } 
+  
+  else if (analogRead(PinZOOM)==LOW) {
+    eCommand = 0x0E;
+    byte0 = 0x28;
+    leds[1] = CRGB(0, 50, 0);
+  }
+  else{
+    eCommand = eSTOP; // No button pressed, stop command
+    byte0 = 0x18;
+    leds[1] = CRGB(50, 0, 0);
+  }
+  FastLED.show();
+}
+
+void loop() {
+
+byte LANC_Frame[8];
+
+  GetCommand();
+  AfterLongGap();
+  if (nCommandTimes < 8) {
+    nCommandTimes++;
+    SendCommand_BYTE0(byte0); // Byte 0
+    NextStartBit();
+    SendCommand_BYTE1(eCommand); // Byte 1
+  } 
+  else{
+    GetNextByte(); // Byte 2
+    NextStartBit();
+    GetNextByte(); // Byte 3
+  }
+  for (int nInd = 2; nInd < 8; nInd++) {
+    NextStartBit();
+    LANC_Frame[nInd] = GetNextByte();
+  }
+  nCommandTimes = 0;
+  nDetectedStatus = LANC_Frame[4];
+  FlashLED();
+  
+}
+
